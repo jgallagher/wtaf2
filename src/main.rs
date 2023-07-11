@@ -66,7 +66,11 @@ fn main() {
                             done_with_headers = true;
                             break;
                         }
-                        let header = String::from_utf8_lossy(&buf[..i]);
+                        // The only header we care about is content length, so
+                        // we'll just lowercase the entire header line (content
+                        // length is numeric, so this will only affect the key).
+                        let header = String::from_utf8_lossy(&buf[..i])
+                            .to_ascii_lowercase();
                         if let Some(length) =
                             header.strip_prefix("content-length: ")
                         {
