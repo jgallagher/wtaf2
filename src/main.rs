@@ -137,18 +137,15 @@ fn main() {
 }
 
 fn read_into(buf: &mut BytesMut, sock: &mut TcpStream) -> io::Result<usize> {
-    if buf.spare_capacity_mut().is_empty() {
-        buf.reserve(128 << 10);
-        assert!(!buf.spare_capacity_mut().is_empty());
-    }
-
     let orig_len = buf.len();
-    unsafe {
-        let b = &mut *(buf.spare_capacity_mut() as *mut [MaybeUninit<u8>]
-            as *mut [u8]);
 
-        let nread = sock.read(b)?;
-        buf.set_len(orig_len + nread);
-        Ok(nread)
-    }
+    // grow an extra 128 KiB
+    buf.resize(orig_len + (128 << 10), 0);
+
+    let n = sock.read(&mut buf[orig_len..])?;
+
+    // trim off any extra that wasn't written into
+    buf.truncate(orig_len + n);
+
+    Ok(n)
 }
