@@ -4,20 +4,17 @@ use memchr::memmem;
 use sha2::Digest;
 use sha2::Sha256;
 use std::env;
+use std::fs;
 use std::io;
 use std::io::Read;
 use std::io::Write;
-use std::mem;
-use std::mem::MaybeUninit;
 use std::net::TcpStream;
-use std::sync::mpsc;
-use std::thread;
 use url::Url;
 
 fn main() {
     let mut args = env::args();
     _ = args.next(); // skip argv[0]
-    let url = args.next().expect("need url as first arg");
+    let url = args.next().expect("need url as arg 1");
     let url = Url::parse(&url).expect("first arg is not a url");
     let addr = url
         .socket_addrs(|| Some(80))
@@ -26,9 +23,13 @@ fn main() {
         .copied()
         .expect("empty addrs");
 
+    let correct_data_path = args.next().expect("need expected file as arg 2");
+    let correct_data =
+        fs::read(&correct_data_path).expect("failed to read correct data");
+
     let balloon_size = args
         .next()
-        .expect("need balloon size as second arg")
+        .expect("need balloon size as arg 3")
         .parse::<usize>()
         .expect("failed to parse balloon size");
     let balloon = vec![1; balloon_size];
@@ -37,35 +38,6 @@ fn main() {
     });
 
     loop {
-        let (tx, rx) = mpsc::channel::<BytesMut>();
-        let hashing_thread = thread::spawn(move || {
-            let mut accum = BufList::new();
-            let mut n = 0;
-            while let Ok(chunk) = rx.recv() {
-                n += chunk.len();
-                if !chunk.is_empty() {
-                    if chunk.iter().all(|&x| x == 0) {
-                        println!(
-                            "hashing thread: rx all 0 chunk at offset {n}"
-                        );
-                    }
-                    accum.push_chunk(&*chunk);
-                }
-            }
-            let mut hasher = Sha256::default();
-            let mut n = 0;
-            for chunk in accum.iter() {
-                if chunk.iter().all(|&x| x == 0) {
-                    println!(
-                        "hashing thread: hashing all 0 chunk at offset {n}"
-                    );
-                }
-                n += chunk.len();
-                hasher.update(chunk);
-            }
-            println!("read {n} bytes; hash={:x}", hasher.finalize());
-        });
-
         println!("connecting to = {addr}");
         let mut stream = TcpStream::connect(addr).expect("could not connect");
         let get = format!(
@@ -110,8 +82,10 @@ fn main() {
 
         let content_length =
             content_length.expect("did not find content-length header");
+        let mut accum = BufList::new();
         let mut nread = buf.len();
-        tx.send(buf.split_to(nread)).unwrap();
+        accum.push_chunk(buf.split_to(nread));
+
         while nread < content_length {
             match read_into(&mut buf, &mut stream) {
                 Ok(0) => {
@@ -119,20 +93,35 @@ fn main() {
                     break;
                 }
                 Ok(n) => {
-                    if buf.iter().copied().take(n).all(|x| x == 0) {
-                        eprintln!(
-                            "FOUND ALL ZERO CHUNK offset={nread:#x} len={n} addr={:?}", buf.as_ptr()
+                    if buf != correct_data[nread..][..n] {
+                        println!(
+                            "INCORRECT CHUNK offset={nread:#x} len={n} addr={:?}", buf.as_ptr()
                         );
-                        panic!("die die die");
+                        for i in 0..n {
+                            println!(
+                                "offset={:#10x} expected={:02x} got={:02x}",
+                                nread + i,
+                                correct_data[nread + i],
+                                buf[i]
+                            );
+                        }
                     }
                     nread += n;
-                    tx.send(buf.split_to(n)).unwrap();
+                    accum.push_chunk(buf.split_to(n));
                 }
                 Err(err) => panic!("read failed: {err}"),
             }
         }
-        mem::drop(tx);
-        hashing_thread.join().unwrap();
+
+        let mut hasher = Sha256::new();
+        for chunk in accum.iter() {
+            hasher.update(chunk);
+        }
+        println!(
+            "read {} bytes; hash={:x}",
+            accum.num_bytes(),
+            hasher.finalize()
+        );
     }
 }
 
