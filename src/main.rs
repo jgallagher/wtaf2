@@ -127,7 +127,6 @@ fn main() {
                     }
                     nread += n;
                     tx.send(buf.split_to(n)).unwrap();
-                    thread::yield_now();
                 }
                 Err(err) => panic!("read failed: {err}"),
             }
