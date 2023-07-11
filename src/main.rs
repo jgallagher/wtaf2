@@ -9,42 +9,12 @@ use std::io::Read;
 use std::io::Write;
 use std::mem;
 use std::mem::MaybeUninit;
-use std::net::SocketAddr;
 use std::net::TcpStream;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
 use std::sync::mpsc;
-use std::sync::Arc;
 use std::thread;
 use url::Url;
 
-fn spin_forever(counter: Arc<AtomicU64>) -> ! {
-    while counter.fetch_add(1, Ordering::Relaxed) < u64::MAX {}
-    panic!("counted to u64::MAX ?!");
-}
-
 fn main() {
-    let nspinners = env::var("NSPIN")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or_else(|| {
-            println!("env var NSPIN not set; creating 8 spinning threads");
-            8
-        });
-    let counter = Arc::new(AtomicU64::new(0));
-    for _ in 0..nspinners {
-        let counter = Arc::clone(&counter);
-        thread::spawn(|| spin_forever(counter));
-    }
-
-    let nworkers = env::var("NWORKER")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or_else(|| {
-            println!("env var NWORKER not set; creating 1 downloading thread");
-            1
-        });
-
     let mut args = env::args();
     _ = args.next(); // skip argv[0]
     let url = args.next().expect("need url as first arg");
@@ -64,21 +34,8 @@ fn main() {
     let balloon = vec![1; balloon_size];
     println!("balloon start={:?} end={:?}", balloon.as_ptr(), unsafe {
         balloon.as_ptr().add(balloon_size)
-    },);
+    });
 
-    let mut worker_threads = Vec::new();
-    for _ in 0..nworkers {
-        let url = url.clone();
-        worker_threads.push(thread::spawn(move || download_thread(url, addr)));
-    }
-
-    for t in worker_threads {
-        println!("balloon print: {}", balloon[balloon_size - 1]);
-        t.join().unwrap();
-    }
-}
-
-fn download_thread(url: Url, addr: SocketAddr) {
     loop {
         let (tx, rx) = mpsc::channel::<BytesMut>();
         let hashing_thread = thread::spawn(move || {
