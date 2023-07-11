@@ -57,8 +57,7 @@ fn main() {
         while !done_with_headers {
             match read_into(&mut buf, &mut stream) {
                 Ok(0) => {
-                    println!("0-length read; done");
-                    break;
+                    panic!("0-length read");
                 }
                 Ok(_n) => {
                     while let Some(i) = finder.find(&buf) {
@@ -80,8 +79,12 @@ fn main() {
             }
         }
 
+        // ensure we found the content length
         let content_length =
             content_length.expect("did not find content-length header");
+
+        // start accumulating the full file with whatever is left from the last
+        // chunk containing the final header separator
         let mut accum = BufList::new();
         let mut nread = buf.len();
         accum.push_chunk(buf.split_to(nread));
@@ -89,8 +92,7 @@ fn main() {
         while nread < content_length {
             match read_into(&mut buf, &mut stream) {
                 Ok(0) => {
-                    println!("0-length read; done");
-                    break;
+                    panic!("0-length read");
                 }
                 Ok(n) => {
                     if buf != correct_data[nread..][..n] {
