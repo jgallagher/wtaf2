@@ -75,7 +75,6 @@ fn main() {
         );
         write!(stream, "{get}").expect("write GET ... failed");
         stream.flush().expect("failed to flush");
-        stream.set_nonblocking(true).expect("failed to set nonblocking");
 
         let finder = memmem::Finder::new(b"\r\n");
         let mut buf = BytesMut::new();
@@ -105,9 +104,6 @@ fn main() {
                         _ = buf.split_to(i + 2);
                     }
                 }
-                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                    thread::yield_now();
-                }
                 Err(err) => panic!("read failed: {err}"),
             }
         }
@@ -125,15 +121,12 @@ fn main() {
                 Ok(n) => {
                     if buf.iter().copied().take(n).all(|x| x == 0) {
                         eprintln!(
-                            "FOUND ALL ZERO CHUNK offset={nread} len={n}"
+                            "FOUND ALL ZERO CHUNK offset={nread:#x} len={n} addr={:?}", buf.as_ptr()
                         );
                         panic!("die die die");
                     }
                     nread += n;
                     tx.send(buf.split_to(n)).unwrap();
-                    thread::yield_now();
-                }
-                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                     thread::yield_now();
                 }
                 Err(err) => panic!("read failed: {err}"),
